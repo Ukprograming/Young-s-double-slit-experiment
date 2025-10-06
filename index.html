@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ヤングの実験シミュレーション</title>
+<style>
+  :root { --bg:#0b1020; --fg:#e8f0ff; --accent:#66d9ff; --panel:#0f1530; }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid #1d2744;background:var(--panel)}
+  header h1{font-size:16px;margin:0;color:#cde3ff}
+  .btn{border:1px solid #2b3864;background:#162047;color:var(--fg);padding:6px 10px;border-radius:10px;cursor:pointer}
+  .btn.active{outline:2px solid var(--accent); background: #2a4192;}
+  #wrap{height:calc(100% - 52px);display:grid;grid-template-columns:1fr;}
+  #c{width:100%;height:100%;display:block;background:#0b1020; cursor: grab;}
+  .controls{position:fixed;left:0;right:0;bottom:0;background:rgba(10,15,35,.95);border-top:1px solid #1d2744;padding:8px 12px;display:grid;grid-template-columns:repeat(5, 1fr);gap:16px}
+  .ctrl{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px}
+  .ctrl label{font-size:12px;color:#cbd5e1;white-space:nowrap}
+  .ctrl output{font-size:12px;color:#e2e8f0;min-width:48px;text-align:right}
+  input[type=range]{width:100%}
+  body{padding-bottom:64px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ヤングの実験シミュレーション　（波形が表示されるまで少し時間がかかります）</h1>
+  <button id="modeWave" class="btn active">波面表示</button>
+  <button id="modePath" class="btn">経路表示</button>
+  <button id="toggleMedium" class="btn">媒質を挿入</button>
+  <button id="pause" class="btn">一時停止</button>
+  <button id="reset" class="btn">初期化</button>
+</header>
+
+<div id="wrap">
+  <canvas id="c"></canvas>
+</div>
+
+<div class="controls">
+  <div class="ctrl">
+    <label for="sL">距離 L</label>
+    <input id="sL" type="range" min="0.5" max="2.0" step="0.01" value="1.00">
+    <output id="sLout">1.00×</output>
+  </div>
+  <div class="ctrl">
+    <label for="sd">間隔 d</label>
+    <input id="sd" type="range" min="0.5" max="2.0" step="0.01" value="1.00">
+    <output id="sdout">1.00×</output>
+  </div>
+  <div class="ctrl">
+    <label for="sl">波長 λ</label>
+    <input id="sl" type="range" min="0.5" max="2.0" step="0.01" value="1.00">
+    <output id="slout">1.00×</output>
+  </div>
+  <div class="ctrl">
+    <label for="sN">屈折率 n</label>
+    <input id="sN" type="range" min="1.0" max="3.0" step="0.01" value="1.50">
+    <output id="sNout">1.50</output>
+  </div>
+  <div class="ctrl">
+    <label for="sT">媒質厚 t</label>
+    <input id="sT" type="range" min="0.1" max="5.0" step="0.01" value="2.00">
+    <output id="sTout">2.00λ</output>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let W, H, margin = 30;
+
+  // --- モデル ---
+  const L0 = 2.0;
+  let LFactor = 1.0, L = L0 * LFactor;
+  let lambdaBase = L/8, dBase = 3*L/8;
+  let lFactor = 1.0, dFactor = 1.0;
+  const lambda = () => lambdaBase * lFactor;
+  const d = () => dBase * dFactor;
+
+  // --- スケール ---
+  let baseScaleX = 180;
+  const pxPerUnitY = 400;
+  function computeBaseScale(){
+    const usable = Math.max(260, (W - 360));
+    baseScaleX = usable / (L0 * 2.2);
+  }
+  const m2pxX = m => m * baseScaleX;
+  const m2pxY = m => m * pxPerUnitY;
+
+  // --- 描画位置と状態 ---
+  const geom = {
+    xSource: 40,
+    xDouble: 320,
+    xScreen(){ return this.xDouble + L * baseScaleX; },
+    centerY(){ return H * 0.5; },
+  };
+  
+  let singleSlitPos = { x: 120, y: 0 };
+  const initialSlitPos = { x: 120, y: 0 };
+  const slitMoveBounds = { x: 40, y: 80 };
+  const slitHandleRadius = 20;
+  let screenPickY = 0;
+  
+  let isMediumVisible = false;
+  let refractiveIndex_n = 1.5;
+  let mediumThicknessFactor = 2.0;
+  const mediumThickness = () => lambda() * mediumThicknessFactor;
+
+  // 波速
+  let vpxBase = 0;
+  function recomputeBaseSpeedForCurrentCanvas(){
+    const screenXForL0 = geom.xDouble + L0 * baseScaleX;
+    const baseDpx = screenXForL0 - geom.xDouble;
+    vpxBase = baseDpx / 8000;
+  }
+
+  function resize(){
+    const dpr = Math.max(1, devicePixelRatio || 1);
+    const r = canvas.getBoundingClientRect();
+    canvas.width = Math.floor(r.width*dpr);
+    canvas.height= Math.floor(r.height*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    W=r.width; H=r.height;
+    if (singleSlitPos.y === 0) {
+      singleSlitPos.y = geom.centerY();
+      initialSlitPos.y = geom.centerY();
+    }
+    if (screenPickY === 0) {
+        screenPickY = geom.centerY();
+    }
+    computeBaseScale();
+    recomputeBaseSpeedForCurrentCanvas();
+  }
+  addEventListener('resize', resize, {passive:true}); resize();
+
+  // --- 位相差 ---
+  function phaseDiffAtY(yPx) {
+    const lambda_px = m2pxX(lambda());
+    if (lambda_px < 1) return 0;
+    const s1_pos = singleSlitPos;
+    const doubleSlitX = geom.xDouble;
+    const centerY = geom.centerY();
+    const slitSeparation_px = m2pxY(d());
+    const s2_upper_y = centerY - slitSeparation_px / 2;
+    const s2_lower_y = centerY + slitSeparation_px / 2;
+    let dist_S1_to_S2_upper = Math.hypot(doubleSlitX - s1_pos.x, s2_upper_y - s1_pos.y);
+    const dist_S1_to_S2_lower = Math.hypot(doubleSlitX - s1_pos.x, s2_lower_y - s1_pos.y);
+    if (isMediumVisible) {
+      const extra_path_px = m2pxX((refractiveIndex_n - 1) * mediumThickness());
+      dist_S1_to_S2_upper += extra_path_px;
+    }
+    const initialPathDiff_px = dist_S1_to_S2_lower - dist_S1_to_S2_upper;
+    const initialPhaseDiff = (2 * Math.PI * initialPathDiff_px) / lambda_px;
+    const screenX = geom.xScreen();
+    const dist_S2_upper_to_P = Math.hypot(screenX - doubleSlitX, yPx - s2_upper_y);
+    const dist_S2_lower_to_P = Math.hypot(screenX - doubleSlitX, yPx - s2_lower_y);
+    const screenPathDiff_px = dist_S2_lower_to_P - dist_S2_upper_to_P;
+    const screenPhaseDiff = (2 * Math.PI * screenPathDiff_px) / lambda_px;
+    return initialPhaseDiff + screenPhaseDiff;
+  }
+
+  function brightnessAtY(yPx){
+    const cosPD = Math.cos( phaseDiffAtY(yPx) );
+    return 0.5*(1+cosPD);
+  }
+
+  // --- 描画 ---
+  function drawHardware(){
+    const cy=geom.centerY();
+    ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(geom.xSource, cy, 12, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle='#cbd5e1'; ctx.font='12px system-ui'; ctx.fillText('Point Source', geom.xSource-30, margin+10);
+    
+    const slitGapHeight = Math.floor(56 / 3);
+    const slitGapYOffset = slitGapHeight / 2;
+    const ssx = singleSlitPos.x;
+    const ssy = singleSlitPos.y;
+    ctx.fillStyle='#1a2548'; ctx.fillRect(ssx-8, margin, 16, H-2*margin);
+    ctx.clearRect(ssx-3, ssy-slitGapYOffset, 6, slitGapHeight);
+    ctx.strokeStyle='#f0d28a'; ctx.lineWidth=2; ctx.strokeRect(ssx-3, ssy-slitGapYOffset, 6, slitGapHeight);
+    ctx.fillStyle='#cbd5e1'; ctx.fillText('Single Slit', ssx-30, margin+10);
+    
+    const sep = m2pxY(d());
+    const dbl_upper_y = cy - sep/2;
+    const dbl_lower_y = cy + sep/2;
+    ctx.fillStyle='#1a2548'; ctx.fillRect(geom.xDouble-8, margin, 16, H-2*margin);
+    ctx.clearRect(geom.xDouble-3, dbl_upper_y-slitGapYOffset, 6, slitGapHeight);
+    ctx.clearRect(geom.xDouble-3, dbl_lower_y-slitGapYOffset, 6, slitGapHeight);
+    ctx.strokeStyle='#f0d28a'; ctx.lineWidth=2;
+    ctx.strokeRect(geom.xDouble-3, dbl_upper_y-slitGapYOffset, 6, slitGapHeight);
+    ctx.strokeRect(geom.xDouble-3, dbl_lower_y-slitGapYOffset, 6, slitGapHeight);
+    ctx.fillStyle='#cbd5e1'; ctx.fillText('Double Slit', geom.xDouble-34, margin+10);
+
+    const xs = geom.xScreen();
+    ctx.fillStyle='#0c1c3c'; ctx.strokeStyle='#2b3864'; ctx.lineWidth=2;
+    ctx.fillRect(xs-8, margin, 16, H-2*margin);
+    ctx.strokeRect(xs-8, margin, 16, H-2*margin);
+    ctx.fillStyle='#8fb4ff'; ctx.fillText('Screen', xs-18, margin+10);
+  }
+
+  function drawMedium() {
+    if (!isMediumVisible) return;
+    const s1 = singleSlitPos;
+    const s2_upper = { x: geom.xDouble, y: geom.centerY() - m2pxY(d()) / 2 };
+    const dx = s2_upper.x - s1.x;
+    const dy = s2_upper.y - s1.y;
+    const angle = Math.atan2(dy, dx);
+    const center = { x: (s1.x + s2_upper.x) / 2, y: (s1.y + s2_upper.y) / 2 };
+    const thickness_px = m2pxX(mediumThickness());
+    const height_px = 60;
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(angle);
+    ctx.fillStyle = `rgba(102, 217, 255, ${0.05 + 0.1 * (refractiveIndex_n - 1)})`;
+    ctx.strokeStyle = '#66d9ff';
+    ctx.lineWidth = 1;
+    ctx.fillRect(-thickness_px / 2, -height_px / 2, thickness_px, height_px);
+    ctx.strokeRect(-thickness_px / 2, -height_px / 2, thickness_px, height_px);
+    ctx.restore();
+  }
+
+  function drawScreenFringes(){
+    const xs=geom.xScreen(), top=margin, bot=H-margin, h=bot-top;
+    ctx.fillStyle='rgba(12,28,60,0.85)'; ctx.fillRect(xs-8, top, 16, h);
+    for(let i=0;i<h;i++){
+      const y=top+i+0.5;
+      const B=brightnessAtY(y);
+      const col=Math.floor(20 + B*235);
+      ctx.strokeStyle=`rgb(${col},${col},${col})`;
+      ctx.beginPath(); ctx.moveTo(xs-7,y); ctx.lineTo(xs+7,y); ctx.stroke();
+    }
+    ctx.lineWidth=2.2;
+    for(let i=0;i<h;i+=2){
+      const y=top+i+0.5, c=Math.cos( phaseDiffAtY(y) );
+      if(c >= 0.995){ ctx.strokeStyle='#ffffff'; }
+      else if(c <= -0.995){ ctx.strokeStyle='#0a1836'; }
+      else continue;
+      ctx.beginPath(); ctx.moveTo(xs-7,y); ctx.lineTo(xs+7,y); ctx.stroke();
+    }
+  }
+
+  function waveSpeedPxPerMs(){ return vpxBase; }
+
+  // ★★★ 修正箇所 ★★★
+  function drawWavefronts(tMs){
+    const cy = geom.centerY();
+    const v = waveSpeedPxPerMs();
+    const lambdaPx = Math.max(10, m2pxX(lambda()));
+    const totalTravelDist = tMs * v;
+    const pS = { x: geom.xSource, y: cy };
+    const s1_pos = singleSlitPos;
+
+    // 波の広がる角度を定義
+    const fullSpread = 2 * Math.PI; // 360° (完全な円)
+    const slitSpread = (150 / 180) * Math.PI; // 150°
+
+    // 1. 点光源からの波を描画 (360°で広がる)
+    const phaseShift_Source = (totalTravelDist % lambdaPx + lambdaPx) % lambdaPx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, s1_pos.x, H);
+    ctx.clip();
+    crest(pS.x, pS.y, '#ffd166', phaseShift_Source, fullSpread);
+    ctx.restore();
+
+    // 2. 単スリットからの波を描画 (150°で広がる)
+    const dist_Source_to_S1 = Math.hypot(s1_pos.x - pS.x, s1_pos.y - pS.y);
+    const distFrom_S1 = totalTravelDist - dist_Source_to_S1;
+
+    if (distFrom_S1 > 0) {
+      const phaseShift_S1 = (distFrom_S1 % lambdaPx + lambdaPx) % lambdaPx;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(s1_pos.x, 0, geom.xDouble - s1_pos.x + 10, H);
+      ctx.clip();
+      crest(s1_pos.x + 1, s1_pos.y, '#ffd166', phaseShift_S1, slitSpread);
+      ctx.restore();
+
+      // 3. 二重スリットからの波を描画 (150°で広がる)
+      const sep = m2pxY(d());
+      const s2_upper_y = cy - sep / 2;
+      const s2_lower_y = cy + sep / 2;
+      
+      let dist_S1_to_S2_upper_px = Math.hypot(geom.xDouble - s1_pos.x, s2_upper_y - s1_pos.y);
+      if (isMediumVisible) {
+        dist_S1_to_S2_upper_px += m2pxX((refractiveIndex_n - 1) * mediumThickness());
+      }
+      const dist_S1_to_S2_lower_px = Math.hypot(geom.xDouble - s1_pos.x, s2_lower_y - s1_pos.y);
+      const distFrom_S2_upper = distFrom_S1 - dist_S1_to_S2_upper_px;
+      if (distFrom_S2_upper > 0) {
+          const phaseShift_S2 = (distFrom_S2_upper % lambdaPx + lambdaPx) % lambdaPx;
+          crest(geom.xDouble + 1, s2_upper_y, '#72f1b8', phaseShift_S2, slitSpread);
+      }
+      const distFrom_S2_lower = distFrom_S1 - dist_S1_to_S2_lower_px;
+      if (distFrom_S2_lower > 0) {
+          const phaseShift_S2 = (distFrom_S2_lower % lambdaPx + lambdaPx) % lambdaPx;
+          crest(geom.xDouble + 1, s2_lower_y, '#72f1b8', phaseShift_S2, slitSpread);
+      }
+    }
+    
+    // 角度を指定できるcrest関数
+    function crest(cx, cy, color, phaseShift, spreadAngle) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.8;
+        const halfAngle = spreadAngle / 2;
+        for(let r = phaseShift; r < W * 1.5; r += lambdaPx){
+            if(r <= 0.5) continue;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, -halfAngle, halfAngle);
+            ctx.stroke();
+        }
+    }
+  }
+
+  function drawPaths(tMs){
+    const cy=geom.centerY(), xs=geom.xScreen(), sep=m2pxY(d());
+    const pS={x:geom.xSource,y:cy}, p1={x:singleSlitPos.x,y:singleSlitPos.y};
+    const pU={x:geom.xDouble,y:cy-sep/2}, pD={x:geom.xDouble,y:cy+sep/2};
+    const P={x:xs,y:screenPickY};
+    ctx.lineWidth=2; ctx.strokeStyle='#9bbcff';
+    ray(pS,p1); ray(p1,pU); ray(p1,pD); ray(pU,P); ray(pD,P);
+    const kpx=(2*Math.PI)/Math.max(10, m2pxX(lambda()));
+    const vpx=waveSpeedPxPerMs();
+    const omega=2*Math.PI*2.0;
+    const coeff=vpx*kpx/omega;
+    const AMP=18;
+    tw(pS, p1); tw(p1,pU, true); tw(p1,pD, false); tw(pU,P); tw(pD,P);
+    ctx.fillStyle='#e2e8f0'; ctx.fillRect(xs-10,P.y-2,20,4);
+    ctx.beginPath(); ctx.arc(xs+22, P.y, 7, 0, Math.PI*2);
+    ctx.fillStyle='#94b8ff'; ctx.fill();
+    ctx.fillStyle='#cbd5e1'; ctx.font='12px system-ui'; ctx.textAlign='left';
+    ctx.fillText('P', xs+34, P.y+4);
+    function ray(a,b){ ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
+    function tw(a,b, hasMedium = false){
+      const dx=b.x-a.x, dy=b.y-a.y, Lp=Math.hypot(dx,dy), nx=dx/Lp, ny=dy/Lp;
+      const ax=-ny, ay=nx;
+      const thickness_px = m2pxX(mediumThickness());
+      ctx.beginPath();
+      for(let s=0; s<=Lp; s+=4){
+        let effective_s = s;
+        if (isMediumVisible && hasMedium) {
+          const s_start = Lp/2 - thickness_px/2;
+          const s_end = Lp/2 + thickness_px/2;
+          if (s > s_start) {
+            const dist_in_medium = Math.min(s, s_end) - s_start;
+            const dist_in_vacuum = s - dist_in_medium;
+            effective_s = dist_in_vacuum + dist_in_medium * refractiveIndex_n;
+          }
+        }
+        const phase=kpx*effective_s - omega*tMs*coeff;
+        const x=a.x + nx*s + ax*Math.sin(phase)*AMP;
+        const y=a.y + ny*s + ay*Math.sin(phase)*AMP;
+        (s===0)? ctx.moveTo(x,y): ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle='#66d9ff'; ctx.lineWidth=1.8; ctx.stroke();
+    }
+  }
+
+  function drawHandles(){
+    const xs=geom.xScreen();
+    ctx.beginPath(); ctx.arc(xs+22, screenPickY, 8, 0, Math.PI*2);
+    ctx.fillStyle='#94b8ff'; ctx.globalAlpha=0.22; ctx.fill();
+    ctx.globalAlpha=1; ctx.lineWidth=2; ctx.strokeStyle='#94b8ff'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(singleSlitPos.x, singleSlitPos.y, slitHandleRadius, 0, Math.PI*2);
+    ctx.fillStyle='#f0d28a'; ctx.globalAlpha=0.22; ctx.fill();
+    ctx.globalAlpha=1; ctx.lineWidth=2; ctx.strokeStyle='#f0d28a'; ctx.stroke();
+  }
+
+  let mode='wave', paused=false, tAccum=0, lastNow=null;
+  function frame(now){
+    if(!paused){ if(lastNow!==null) tAccum += (now-lastNow); }
+    lastNow=now;
+    ctx.clearRect(0,0,W,H);
+    drawHardware();
+    drawMedium();
+    drawScreenFringes();
+    (mode==='wave')? drawWavefronts(tAccum): drawPaths(tAccum);
+    drawHandles();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  const btnWave=document.getElementById('modeWave');
+  const btnPath=document.getElementById('modePath');
+  const btnPause=document.getElementById('pause');
+  const btnMedium = document.getElementById('toggleMedium');
+  btnWave.onclick=()=>{mode='wave';btnWave.classList.add('active');btnPath.classList.remove('active');};
+  btnPath.onclick=()=>{mode='path';btnPath.classList.add('active');btnWave.classList.remove('active');};
+  btnPause.onclick=()=>{paused=!paused;btnPause.textContent=paused?'再生':'一時停止';};
+  btnMedium.onclick=()=>{
+    isMediumVisible = !isMediumVisible;
+    btnMedium.classList.toggle('active');
+    btnMedium.textContent = isMediumVisible ? '媒質を削除' : '媒質を挿入';
+  };
+
+  const sL=document.getElementById('sL'), sd=document.getElementById('sd'), sl=document.getElementById('sl'), sN=document.getElementById('sN'), sT=document.getElementById('sT');
+  const sLout=document.getElementById('sLout'), sdout=document.getElementById('sdout'), slout=document.getElementById('slout'), sNout=document.getElementById('sNout'), sTout=document.getElementById('sTout');
+  sL.addEventListener('input', ()=>{ LFactor=parseFloat(sL.value); L=L0*LFactor; sLout.textContent=LFactor.toFixed(2)+'×'; });
+  sd.addEventListener('input', ()=>{ dFactor=parseFloat(sd.value); sdout.textContent=dFactor.toFixed(2)+'×'; });
+  sl.addEventListener('input', ()=>{ lFactor=parseFloat(sl.value); slout.textContent=lFactor.toFixed(2)+'×'; });
+  sN.addEventListener('input', ()=>{ refractiveIndex_n=parseFloat(sN.value); sNout.textContent=refractiveIndex_n.toFixed(2); });
+  sT.addEventListener('input', ()=>{ mediumThicknessFactor=parseFloat(sT.value); sTout.textContent=mediumThicknessFactor.toFixed(2)+'λ'; });
+
+  document.getElementById('reset').onclick=()=>{
+    LFactor=dFactor=lFactor=1.0; L=L0;
+    lambdaBase=L/8; dBase=3*L/8;
+    refractiveIndex_n = 1.5; mediumThicknessFactor = 2.0;
+    isMediumVisible = false;
+    btnMedium.classList.remove('active');
+    btnMedium.textContent = '媒質を挿入';
+    screenPickY = geom.centerY();
+    singleSlitPos = { x: initialSlitPos.x, y: geom.centerY() };
+    sL.value=sd.value=sl.value="1.00";
+    sLout.textContent=sdout.textContent=slout.textContent="1.00×";
+    sN.value = "1.50"; sNout.textContent = "1.50";
+    sT.value = "2.00"; sTout.textContent = "2.00λ";
+  };
+
+  let dragging=null;
+  canvas.addEventListener('mousedown',(e)=>{
+    const r=canvas.getBoundingClientRect();
+    const p={x:e.clientX-r.left, y:e.clientY-r.top};
+    if(Math.hypot(p.x - (geom.xScreen()+22), p.y - screenPickY) < 12) {
+        dragging='P';
+    } else if (Math.hypot(p.x - singleSlitPos.x, p.y - singleSlitPos.y) < slitHandleRadius) {
+        dragging = 'S1';
+    }
+  });
+  canvas.addEventListener('mousemove',(e)=>{
+    const r=canvas.getBoundingClientRect();
+    const my = e.clientY - r.top;
+    if(dragging==='P'){
+      screenPickY=Math.max(margin, Math.min(H-margin, my));
+    } else if (dragging === 'S1') {
+      const mx = e.clientX - r.left;
+      singleSlitPos.x = Math.max(initialSlitPos.x - slitMoveBounds.x, Math.min(initialSlitPos.x + slitMoveBounds.x, mx));
+      singleSlitPos.y = Math.max(initialSlitPos.y - slitMoveBounds.y, Math.min(initialSlitPos.y + slitMoveBounds.y, my));
+    }
+  });
+  addEventListener('mouseup',()=>dragging=null);
+})();
+</script>
+</body>
+</html>
