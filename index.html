@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ヤングの実験シミュレーション</title>
+<title>ヤングの実験（位相連続）</title>
 <style>
   :root { --bg:#0b1020; --fg:#e8f0ff; --accent:#66d9ff; --panel:#0f1530; }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
@@ -23,7 +23,7 @@
 </head>
 <body>
 <header>
-  <h1>ヤングの実験シミュレーション　（波形が表示されるまで少し時間がかかります）</h1>
+  <h1>ヤングの実験（位相連続）</h1>
   <button id="modeWave" class="btn active">波面表示</button>
   <button id="modePath" class="btn">経路表示</button>
   <button id="toggleMedium" class="btn">媒質を挿入</button>
@@ -169,7 +169,6 @@
     const cy=geom.centerY();
     ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(geom.xSource, cy, 12, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle='#cbd5e1'; ctx.font='12px system-ui'; ctx.fillText('Point Source', geom.xSource-30, margin+10);
-    
     const slitGapHeight = Math.floor(56 / 3);
     const slitGapYOffset = slitGapHeight / 2;
     const ssx = singleSlitPos.x;
@@ -178,7 +177,6 @@
     ctx.clearRect(ssx-3, ssy-slitGapYOffset, 6, slitGapHeight);
     ctx.strokeStyle='#f0d28a'; ctx.lineWidth=2; ctx.strokeRect(ssx-3, ssy-slitGapYOffset, 6, slitGapHeight);
     ctx.fillStyle='#cbd5e1'; ctx.fillText('Single Slit', ssx-30, margin+10);
-    
     const sep = m2pxY(d());
     const dbl_upper_y = cy - sep/2;
     const dbl_lower_y = cy + sep/2;
@@ -189,7 +187,6 @@
     ctx.strokeRect(geom.xDouble-3, dbl_upper_y-slitGapYOffset, 6, slitGapHeight);
     ctx.strokeRect(geom.xDouble-3, dbl_lower_y-slitGapYOffset, 6, slitGapHeight);
     ctx.fillStyle='#cbd5e1'; ctx.fillText('Double Slit', geom.xDouble-34, margin+10);
-
     const xs = geom.xScreen();
     ctx.fillStyle='#0c1c3c'; ctx.strokeStyle='#2b3864'; ctx.lineWidth=2;
     ctx.fillRect(xs-8, margin, 16, H-2*margin);
@@ -240,7 +237,6 @@
 
   function waveSpeedPxPerMs(){ return vpxBase; }
 
-  // ★★★ 修正箇所 ★★★
   function drawWavefronts(tMs){
     const cy = geom.centerY();
     const v = waveSpeedPxPerMs();
@@ -248,12 +244,8 @@
     const totalTravelDist = tMs * v;
     const pS = { x: geom.xSource, y: cy };
     const s1_pos = singleSlitPos;
-
-    // 波の広がる角度を定義
-    const fullSpread = 2 * Math.PI; // 360° (完全な円)
-    const slitSpread = (150 / 180) * Math.PI; // 150°
-
-    // 1. 点光源からの波を描画 (360°で広がる)
+    const fullSpread = 2 * Math.PI;
+    const slitSpread = (150 / 180) * Math.PI;
     const phaseShift_Source = (totalTravelDist % lambdaPx + lambdaPx) % lambdaPx;
     ctx.save();
     ctx.beginPath();
@@ -261,11 +253,8 @@
     ctx.clip();
     crest(pS.x, pS.y, '#ffd166', phaseShift_Source, fullSpread);
     ctx.restore();
-
-    // 2. 単スリットからの波を描画 (150°で広がる)
     const dist_Source_to_S1 = Math.hypot(s1_pos.x - pS.x, s1_pos.y - pS.y);
     const distFrom_S1 = totalTravelDist - dist_Source_to_S1;
-
     if (distFrom_S1 > 0) {
       const phaseShift_S1 = (distFrom_S1 % lambdaPx + lambdaPx) % lambdaPx;
       ctx.save();
@@ -274,12 +263,9 @@
       ctx.clip();
       crest(s1_pos.x + 1, s1_pos.y, '#ffd166', phaseShift_S1, slitSpread);
       ctx.restore();
-
-      // 3. 二重スリットからの波を描画 (150°で広がる)
       const sep = m2pxY(d());
       const s2_upper_y = cy - sep / 2;
       const s2_lower_y = cy + sep / 2;
-      
       let dist_S1_to_S2_upper_px = Math.hypot(geom.xDouble - s1_pos.x, s2_upper_y - s1_pos.y);
       if (isMediumVisible) {
         dist_S1_to_S2_upper_px += m2pxX((refractiveIndex_n - 1) * mediumThickness());
@@ -296,8 +282,6 @@
           crest(geom.xDouble + 1, s2_lower_y, '#72f1b8', phaseShift_S2, slitSpread);
       }
     }
-    
-    // 角度を指定できるcrest関数
     function crest(cx, cy, color, phaseShift, spreadAngle) {
         ctx.strokeStyle = color; ctx.lineWidth = 1.8;
         const halfAngle = spreadAngle / 2;
@@ -310,29 +294,57 @@
     }
   }
 
+  // ★★★ 修正箇所 ★★★
   function drawPaths(tMs){
     const cy=geom.centerY(), xs=geom.xScreen(), sep=m2pxY(d());
     const pS={x:geom.xSource,y:cy}, p1={x:singleSlitPos.x,y:singleSlitPos.y};
     const pU={x:geom.xDouble,y:cy-sep/2}, pD={x:geom.xDouble,y:cy+sep/2};
     const P={x:xs,y:screenPickY};
+    
+    // 直線経路の描画
     ctx.lineWidth=2; ctx.strokeStyle='#9bbcff';
     ray(pS,p1); ray(p1,pU); ray(p1,pD); ray(pU,P); ray(pD,P);
+
+    // 位相を考慮した波の描画
     const kpx=(2*Math.PI)/Math.max(10, m2pxX(lambda()));
     const vpx=waveSpeedPxPerMs();
-    const omega=2*Math.PI*2.0;
-    const coeff=vpx*kpx/omega;
-    const AMP=18;
-    tw(pS, p1); tw(p1,pU, true); tw(p1,pD, false); tw(pU,P); tw(pD,P);
+    if(vpx <= 0) return;
+
+    // 各セグメントの開始時刻（オフセット）を計算
+    const dist_S_to_S1 = Math.hypot(p1.x - pS.x, p1.y - pS.y);
+    const time_at_S1 = dist_S_to_S1 / vpx;
+
+    let dist_S1_to_S2_upper = Math.hypot(pU.x - p1.x, pU.y - p1.y);
+    if (isMediumVisible) {
+      const extra_dist = m2pxX((refractiveIndex_n - 1) * mediumThickness());
+      dist_S1_to_S2_upper += extra_dist;
+    }
+    const time_at_S2_upper = time_at_S1 + dist_S1_to_S2_upper / vpx;
+    
+    const dist_S1_to_S2_lower = Math.hypot(pD.x - p1.x, pD.y - p1.y);
+    const time_at_S2_lower = time_at_S1 + dist_S1_to_S2_lower / vpx;
+
+    // 各セグメントの波を描画
+    tw(pS, p1, false, 0); 
+    tw(p1,pU, true, time_at_S1); 
+    tw(p1,pD, false, time_at_S1); 
+    tw(pU,P, false, time_at_S2_upper); 
+    tw(pD,P, false, time_at_S2_lower);
+
+    // P点の描画
     ctx.fillStyle='#e2e8f0'; ctx.fillRect(xs-10,P.y-2,20,4);
     ctx.beginPath(); ctx.arc(xs+22, P.y, 7, 0, Math.PI*2);
     ctx.fillStyle='#94b8ff'; ctx.fill();
     ctx.fillStyle='#cbd5e1'; ctx.font='12px system-ui'; ctx.textAlign='left';
     ctx.fillText('P', xs+34, P.y+4);
+
+    // ヘルパー関数
     function ray(a,b){ ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
-    function tw(a,b, hasMedium = false){
+    function tw(a,b, hasMedium = false, timeOffset = 0){
       const dx=b.x-a.x, dy=b.y-a.y, Lp=Math.hypot(dx,dy), nx=dx/Lp, ny=dy/Lp;
       const ax=-ny, ay=nx;
       const thickness_px = m2pxX(mediumThickness());
+      const AMP=18;
       ctx.beginPath();
       for(let s=0; s<=Lp; s+=4){
         let effective_s = s;
@@ -345,7 +357,8 @@
             effective_s = dist_in_vacuum + dist_in_medium * refractiveIndex_n;
           }
         }
-        const phase=kpx*effective_s - omega*tMs*coeff;
+        // 位相計算式を修正：(tMs - timeOffset) で各波の開始タイミングをずらす
+        const phase = kpx * (effective_s - vpx * (tMs - timeOffset));
         const x=a.x + nx*s + ax*Math.sin(phase)*AMP;
         const y=a.y + ny*s + ay*Math.sin(phase)*AMP;
         (s===0)? ctx.moveTo(x,y): ctx.lineTo(x,y);
