@@ -5,6 +5,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>ヤングの実験シミュレーター</title>
+    <link rel="icon" href="data:,">
     <style>
         :root {
             --bg: #0b1020;
@@ -278,8 +279,27 @@
                 ctx.fillStyle = '#0c1c3c'; ctx.strokeStyle = '#2b3864'; ctx.lineWidth = 2;
                 ctx.fillRect(xs - 8, margin, 16, H - 2 * margin);
                 ctx.strokeRect(xs - 8, margin, 16, H - 2 * margin);
-                ctx.fillStyle = '#8fb4ff'; ctx.fillText('Screen', xs - 18, margin + 10);
             }
+
+            function drawLabelsOnTop() {
+                const xs = geom.xScreen();
+
+                ctx.save();
+                ctx.font = '12px system-ui';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'alphabetic';
+
+                // 文字の後ろに薄い背景を敷いて、必ず見えるようにする（任意だけど強い）
+                const x = xs - 18;
+                const y = margin + 10;
+                ctx.fillStyle = 'rgba(11,16,32,0.7)';
+                ctx.fillRect(x - 2, y - 12, 54, 16);
+
+                ctx.fillStyle = '#8fb4ff';
+                ctx.fillText('Screen', x, y);
+                ctx.restore();
+            }
+
 
             function drawMedium() {
                 if (!isMediumVisible) return;
@@ -501,13 +521,19 @@
                 if (!paused) { if (lastNow !== null) tAccum += (now - lastNow); }
                 lastNow = now;
                 ctx.clearRect(0, 0, W, H);
+
                 drawHardware();
                 drawMedium();
                 drawScreenFringes();
                 (mode === 'wave') ? drawWavefronts(tAccum) : drawPaths(tAccum);
                 drawHandles();
+
+                // ★追加：ラベルを最前面に
+                drawLabelsOnTop();
+
                 requestAnimationFrame(frame);
             }
+
             requestAnimationFrame(frame);
 
             const btnWave = document.getElementById('modeWave');
