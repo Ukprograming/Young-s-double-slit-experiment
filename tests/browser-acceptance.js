@@ -11,6 +11,7 @@ async function slider(id,value){await page.locator('#'+id).evaluate((el,v)=>{el.
 const original=await read();
 check(original.waveBounds[1]<=original.screenX+1e-8,'wave geometry ends at screen');
 check(original.wavePlaneY===0,'wavefronts confined to experiment plane');
+check(!original.handles.find(h=>h.kind==='pick').visible,'observation dot hidden in wave mode');
 await page.getByRole('button',{name:'一時停止',exact:true}).click();
 const paused=(await read()).time;await page.waitForTimeout(180);check((await read()).time===paused,'pause stops propagation');
 await page.getByRole('button',{name:'レーザーポインター',exact:true}).click();
@@ -48,6 +49,8 @@ const distance=x=>Math.hypot(...x.camera.map((v,i)=>v-x.target[i]));before=await
 await page.getByRole('button',{name:'拡大',exact:true}).click();d=await read();check(distance(d)<distance(before)*.9,'zoom button zooms');
 await page.mouse.move(bounds.x+200,bounds.y+200);before=await read();await page.mouse.wheel(0,180);await page.waitForTimeout(250);d=await read();check(distance(d)>distance(before),'mouse wheel zooms');
 await page.getByRole('button',{name:'初期化',exact:true}).click();
+await page.getByRole('button',{name:'経路表示',exact:true}).click();
+check((await read()).handles.find(h=>h.kind==='pick').visible,'observation dot visible in path mode');
 for(const kind of ['single','pick']){
  before=await read();const h=before.handles.find(h=>h.kind===kind);const x=bounds.x+(h.screen[0]+1)*bounds.width/2,y=bounds.y+(1-h.screen[1])*bounds.height/2;
  await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+25,y+25,{steps:6});await page.mouse.up();await page.waitForTimeout(150);d=await read();
