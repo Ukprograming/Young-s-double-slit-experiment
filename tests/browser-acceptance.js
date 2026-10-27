@@ -17,9 +17,10 @@ await page.getByRole('button',{name:'レーザーポインター',exact:true}).c
 let laser=await read();
 check(laser.state.source==='laser'&&!laser.handles.some(h=>h.kind==='single'),'laser removes single slit and its handle');
 check(await page.locator('#angleControl').isVisible()&&!await page.locator('#singleControl').isVisible(),'source-specific controls switch');
+const laserCenter=laser.brightness[1];
 await slider('sAngle',20);laser=await read();
 check(Math.abs(laser.incident[1]-laser.incident[0]-1.3*Math.sin(20*Math.PI/180))<1e-9,'laser angle controls slit incident phase');
-check(Math.abs(laser.brightness[1]-1)>.01,'tilted laser shifts fringes');
+check(Math.abs(laser.brightness[1]-laserCenter)>.001,'tilted laser shifts fringes');
 await page.screenshot({path:'output/playwright/laser-wave.png'});
 await page.getByRole('button',{name:'経路表示',exact:true}).click();
 await page.getByRole('button',{name:'媒質を挿入',exact:true}).click();

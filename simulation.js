@@ -1,6 +1,6 @@
 import * as THREE from './vendor/three.module.min.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
-import { SOURCE_X,DOUBLE_X,HALF_WIDTH,SPEED,defaults,wavelength,slitPositions,screenX,direction,incidentStart,mediumGeometry,incidentOpticalDistance,brightness,pathPoint } from './physics.mjs';
+import { SOURCE_X,DOUBLE_X,HALF_WIDTH,SCREEN_HALF_WIDTH,SPEED,SCREEN_EXPOSURE,defaults,wavelength,slitPositions,screenX,direction,incidentStart,mediumGeometry,incidentOpticalDistance,brightness,incidentAmplitude,pathPoint } from './physics.mjs?v=20261027-2';
 
 const $=id=>document.getElementById(id);
 const canvas=$('c'), state=defaults();
@@ -8,7 +8,7 @@ let renderer;
 try { renderer=new THREE.WebGLRenderer({canvas,antialias:true}); }
 catch(error) { $('error').hidden=false; $('error').textContent='3D表示を開始できませんでした。WebGLが有効なブラウザーで開いてください。'; throw error; }
 renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
-renderer.setClearColor(0x0b1020);
+renderer.setClearColor(0x000000);
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(43,1,0.05,160);
 const controls=new OrbitControls(camera,canvas);
@@ -21,7 +21,7 @@ scene.add(new THREE.HemisphereLight(0xd9edff,0x1b2440,2.4));
 const light=new THREE.DirectionalLight(0xffffff,2.2); light.position.set(-3,7,5); scene.add(light);
 const hardware=new THREE.Group(),paths=new THREE.Group(); scene.add(hardware,paths);
 const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2(),dragPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
-let handles=[],pathCurves=[],paused=false,time=18,last=performance.now(),drag=null;
+let handles=[],pathCurves=[],paused=false,time=40,last=performance.now(),drag=null;
 
 function disposeGroup(group) {
  group.traverse(o=>{o.geometry?.dispose();if(Array.isArray(o.material))o.material.forEach(m=>m.dispose());else o.material?.dispose();});
@@ -47,14 +47,14 @@ function board(x,gaps) {
 }
 const uniforms={
  uTime:{value:time},uLambda:{value:0.25},uScreen:{value:3},uSingle:{value:new THREE.Vector2()},uLaser:{value:0},
- uDirection:{value:new THREE.Vector2(1,0)},uSlits:{value:new THREE.Vector2()},uIncident:{value:new THREE.Vector2()},
+ uAmplitude:{value:new THREE.Vector2(1,1)},uDirection:{value:new THREE.Vector2(1,0)},uSlits:{value:new THREE.Vector2()},uIncident:{value:new THREE.Vector2()},
  uMedium:{value:0},uN:{value:1.5},uBoxCenter:{value:new THREE.Vector2()},uBoxAxis:{value:new THREE.Vector2()},uBoxSize:{value:new THREE.Vector2()}
 };
 const vertex=`varying vec3 world; void main(){vec4 p=modelMatrix*vec4(position,1.);world=p.xyz;gl_Position=projectionMatrix*viewMatrix*p;}`;
 const shared=`
  varying vec3 world;
  uniform float uTime,uLambda,uScreen,uLaser,uMedium,uN;
- uniform vec2 uSingle,uDirection,uSlits,uIncident,uBoxCenter,uBoxAxis,uBoxSize;
+ uniform vec2 uSingle,uDirection,uSlits,uIncident,uBoxCenter,uBoxAxis,uBoxSize,uAmplitude;
  float boxDistance(vec2 a,vec2 b){
   vec2 normal=vec2(-uBoxAxis.y,uBoxAxis.x);
   vec2 q=vec2(dot(a-uBoxCenter,uBoxAxis),dot(a-uBoxCenter,normal));
@@ -71,6 +71,9 @@ const shared=`
   if(uLaser>.5){start=vec2(-4.2,p.y-(p.x+4.2)*uDirection.y/uDirection.x);base=dot(p-vec2(-4.2,0.),uDirection)+2.;}
   return base+(uN-1.)*boxDistance(start,p);
  }
+ float spread(float r){return 1./max(1.,r);}
+ float singleAmplitude(){return spread(distance(vec2(-4.2,0.),uSingle));}
+ float waveLight(float amplitude){return pow(1.-exp(-8.*amplitude*amplitude),.4);}
  float crest(float optical){
   float phase=6.28318530718*(optical-${SPEED}*uTime)/uLambda;
   float band=abs(sin(phase*.5));
@@ -82,16 +85,17 @@ const waveMaterial=new THREE.ShaderMaterial({uniforms,vertexShader:vertex,transp
  void main(){
   vec2 p=world.xz;
   // Clip in world coordinates, independent of the camera direction or zoom.
-  if(p.x>=uScreen||abs(p.y)>2.6)discard;
+  if(p.x>=uScreen||abs(p.y)>(p.x< -1.?${HALF_WIDTH.toFixed(1)}:${SCREEN_HALF_WIDTH.toFixed(1)}))discard;
   vec3 color=vec3(1.,.78,.32);float alpha=0.;
   if(p.x< -1.045){
-   if(uLaser<.5&&p.x<uSingle.x-.04)alpha=crest(distance(p,vec2(-4.2,0.)));
-   else if(uLaser>.5||p.x>uSingle.x+.04)alpha=crest(incident(p));
+   if(uLaser<.5&&p.x<uSingle.x-.04){float r=distance(p,vec2(-4.2,0.));alpha=crest(r)*waveLight(spread(r));}
+   else if(uLaser>.5||p.x>uSingle.x+.04){float a=uLaser>.5?1.:singleAmplitude()*spread(distance(p,uSingle));alpha=crest(incident(p))*waveLight(a);}
   }else if(p.x>-.955){
-   float upper=crest(uIncident.x+distance(p,vec2(-1.,uSlits.x)));
-   float lower=crest(uIncident.y+distance(p,vec2(-1.,uSlits.y)));
+   float r1=distance(p,vec2(-1.,uSlits.x)),r2=distance(p,vec2(-1.,uSlits.y));
+   float upper=crest(uIncident.x+r1)*waveLight(uAmplitude.x*spread(r1));
+   float lower=crest(uIncident.y+r2)*waveLight(uAmplitude.y*spread(r2));
    color=mix(vec3(.35,.95,.72),vec3(.38,.7,1.),lower/(upper+lower+.001));
-   alpha=min(1.,upper+lower);
+   alpha=max(upper,lower);
   }
   if(alpha<.015)discard;
   gl_FragColor=vec4(color,alpha*.9);
@@ -102,13 +106,16 @@ const screenMaterial=new THREE.ShaderMaterial({uniforms,vertexShader:vertex,side
  void main(){
   float a=uIncident.x+distance(vec2(-1.,uSlits.x),vec2(uScreen,world.z));
   float b=uIncident.y+distance(vec2(-1.,uSlits.y),vec2(uScreen,world.z));
-  float intensity=.5*(1.+cos(6.28318530718*(b-a)/uLambda));
-  vec3 col=mix(vec3(.018,.035,.065),vec3(.87,.96,1.),intensity);
+  float amp1=uAmplitude.x*spread(distance(vec2(-1.,uSlits.x),vec2(uScreen,world.z)));
+  float amp2=uAmplitude.y*spread(distance(vec2(-1.,uSlits.y),vec2(uScreen,world.z)));
+  float intensity=max(0.,(amp1*amp1+amp2*amp2+2.*amp1*amp2*cos(6.28318530718*(b-a)/uLambda))*.25);
+  float luminance=sqrt(1.-exp(-${SCREEN_EXPOSURE.toFixed(1)}*intensity));
+  vec3 col=vec3(.87,.96,1.)*luminance;
   gl_FragColor=vec4(col,1.);
  }`});
 const screenFaces=[];
 for(const sign of [-1,1]) {
- const face=new THREE.Mesh(new THREE.PlaneGeometry(HALF_WIDTH*2,1.4),screenMaterial);
+ const face=new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_HALF_WIDTH*2,1.4),screenMaterial);
  face.rotation.y=Math.PI/2;face.userData.sign=sign;screenFaces.push(face);scene.add(face);
 }
 function line(a,b,color,opacity=1) {
@@ -150,7 +157,7 @@ function rebuild() {
   box(laser,[-.28,0,0],[.6,.22,.22],0xb6c6d8);box(laser,[.045,0,0],[.08,.15,.15],0xe16666);
  }
  board(DOUBLE_X,zs);
- box(hardware,[xs+.04,0,0],[.08,1.45,HALF_WIDTH*2+.08],0x344462);
+ box(hardware,[xs+.04,0,0],[.08,1.45,SCREEN_HALF_WIDTH*2+.08],0x344462);
  for(const face of screenFaces)face.position.set(xs+.04+face.userData.sign*.041,0,0);
  const pick=sphere(hardware,xs-.095,0,state.pick,.105,0xffffff);pick.userData.handle='pick';handles.push(pick);
  // A small rim makes the draggable observation point visible over bright fringes.
@@ -160,11 +167,12 @@ function rebuild() {
   mesh.rotation.y=-Math.atan2(medium.axis[1],medium.axis[0]);mesh.renderOrder=2;
  }
  const left=SOURCE_X-.55,right=xs;
- wavePlane.scale.set(right-left,HALF_WIDTH*2,1);wavePlane.position.set((left+right)/2,0,0);
+ wavePlane.scale.set(right-left,SCREEN_HALF_WIDTH*2,1);wavePlane.position.set((left+right)/2,0,0);
  uniforms.uLambda.value=wavelength(state);uniforms.uScreen.value=xs;
  uniforms.uSingle.value.set(state.singleX,state.singleZ);uniforms.uLaser.value=state.source==='laser'?1:0;
  uniforms.uDirection.value.set(...direction(state));uniforms.uSlits.value.set(...zs);
  uniforms.uIncident.value.set(...zs.map(z=>incidentOpticalDistance(state,z)));
+ uniforms.uAmplitude.value.set(...zs.map(z=>incidentAmplitude(state,z)));
  const medium=mediumGeometry(state);uniforms.uMedium.value=state.medium?1:0;uniforms.uN.value=state.n;
  uniforms.uBoxCenter.value.set(...medium.center);uniforms.uBoxAxis.value.set(...medium.axis);uniforms.uBoxSize.value.set(medium.length,medium.width);
  rebuildPaths();updateUI();
@@ -175,6 +183,7 @@ function updateUI() {
  active('modeWave',state.mode==='wave');active('modePath',state.mode==='path');active('toggleMedium',state.medium);active('pause',paused);
  $('toggleMedium').textContent=state.medium?'媒質を削除':'媒質を挿入';$('pause').textContent=paused?'再生':'一時停止';
  $('angleControl').hidden=state.source!=='laser';$('singleControl').hidden=state.source!=='point';
+ $('mediumStatus').textContent=state.medium?'挿入中':'未挿入';$('speed').value=String(state.speed);
 }
 for(const [id,key,format] of [
  ['sL','L',v=>v.toFixed(2)+'×'],['sd','d',v=>v.toFixed(2)+'×'],['sl','wavelength',v=>v.toFixed(2)+'×'],
@@ -187,6 +196,7 @@ $('modeWave').onclick=()=>{state.mode='wave';rebuildPaths();updateUI();};
 $('modePath').onclick=()=>{state.mode='path';rebuildPaths();updateUI();};
 $('toggleMedium').onclick=()=>{state.medium=!state.medium;rebuild();};
 $('pause').onclick=()=>{paused=!paused;updateUI();};
+$('speed').onchange=()=>{state.speed=Number($('speed').value);};
 function setPan(pan) {
  controls.mouseButtons.LEFT=pan?THREE.MOUSE.PAN:THREE.MOUSE.ROTATE;
  controls.touches.ONE=pan?THREE.TOUCH.PAN:THREE.TOUCH.ROTATE;
@@ -204,7 +214,7 @@ function fitView(top=false) {
  const up=new THREE.Vector3().crossVectors(eye,right).normalize();
  const tanV=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2),tanH=tanV*camera.aspect;
  let distance=3;
- for(const x of [SOURCE_X-.7,screenX(state)+.15])for(const y of [-.85,.85])for(const z of [-2.75,2.75]) {
+ for(const x of [SOURCE_X-.7,screenX(state)+.15])for(const y of [-.85,.85])for(const z of (x>DOUBLE_X?[-SCREEN_HALF_WIDTH-.15,SCREEN_HALF_WIDTH+.15]:[-HALF_WIDTH-.15,HALF_WIDTH+.15])) {
   const p=new THREE.Vector3(x-center,y,z);
   distance=Math.max(distance,p.dot(eye)+Math.max(Math.abs(p.dot(right))/(tanH*.86),Math.abs(p.dot(up))/(tanV*.75)));
  }
@@ -213,7 +223,7 @@ function fitView(top=false) {
 }
 $('viewReset').onclick=()=>fitView();$('viewTop').onclick=()=>fitView(true);
 $('reset').onclick=()=>{
- Object.assign(state,defaults());paused=false;time=18;
+ Object.assign(state,defaults());paused=false;time=40;
  for(const [id,value,text] of [['sL',1,'1.00×'],['sd',1,'1.00×'],['sl',1,'1.00×'],['sN',1.5,'1.50'],['sT',2,'2.00λ'],['sAngle',0,'0.0°'],['sSingle',0,'0.00'],['sPick',0,'0.00']]){$(id).value=value;$(id+'out').textContent=text;}
  setPan(false);rebuild();fitView();
 };
@@ -243,7 +253,7 @@ canvas.addEventListener('pointermove',event=>{
  if(!drag||drag.id!==event.pointerId)return;
  mouseRay(event);const p=new THREE.Vector3();
  if(raycaster.ray.intersectPlane(dragPlane,p)) {
-  if(drag.kind==='pick'){state.pick=THREE.MathUtils.clamp(p.z,-2.5,2.5);$('sPick').value=state.pick;$('sPickout').textContent=state.pick.toFixed(2);}
+  if(drag.kind==='pick'){state.pick=THREE.MathUtils.clamp(p.z,-SCREEN_HALF_WIDTH+.1,SCREEN_HALF_WIDTH-.1);$('sPick').value=state.pick;$('sPickout').textContent=state.pick.toFixed(2);}
   else {state.singleX=THREE.MathUtils.clamp(p.x,-3.4,-2.3);state.singleZ=THREE.MathUtils.clamp(p.z,-.8,.8);$('sSingle').value=state.singleZ;$('sSingleout').textContent=state.singleZ.toFixed(2);}
   rebuild();
  }
@@ -254,7 +264,7 @@ for(const type of ['pointerup','pointercancel','lostpointercapture'])canvas.addE
 window.addEventListener('blur',finishDrag);
 canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();$('error').hidden=false;$('error').textContent='3D表示が中断されました。ページを再読み込みしてください。';});
 function frame(now) {
- if(!paused)time+=Math.min((now-last)/1000,.1);last=now;uniforms.uTime.value=time;
+ if(!paused)time+=Math.min((now-last)/1000,.1)*state.speed;last=now;uniforms.uTime.value=time;
  if(state.mode==='path')for(const curve of pathCurves) {
   const p=curve.mesh.geometry.attributes.position;
   for(let i=0;i<p.count;i++)p.setXYZ(i,...pathPoint(state,curve.a,curve.b,i/(p.count-1),curve.offset,time,curve.throughMedium));
@@ -265,9 +275,9 @@ function frame(now) {
 resize();rebuild();fitView();requestAnimationFrame(frame);
 // Opt-in read-only diagnostics for model/rendering acceptance checks.
 if(new URLSearchParams(location.search).has('debug'))window.youngDiagnostics=()=>({
- state:{...state},time,camera:camera.position.toArray(),target:controls.target.toArray(),
+ state:{...state},time,screenProbe:new THREE.Vector3(screenX(state)-.001,.45,0).project(camera).toArray(),camera:camera.position.toArray(),target:controls.target.toArray(),
  incident:uniforms.uIncident.value.toArray(),screenX:screenX(state),waveBounds:[wavePlane.position.x-wavePlane.scale.x/2,wavePlane.position.x+wavePlane.scale.x/2],
- wavePlaneY:wavePlane.position.y,hardware:hardware.children.length,handles:handles.map(h=>({kind:h.userData.handle,world:h.position.toArray(),screen:h.position.clone().project(camera).toArray()})),
+ wavePlaneY:wavePlane.position.y,speed:SPEED,screenWidth:SCREEN_HALF_WIDTH*2,screenAmplitude:uniforms.uAmplitude.value.toArray(),background:renderer.getClearColor(new THREE.Color()).getHexString(),hardware:hardware.children.length,handles:handles.map(h=>({kind:h.userData.handle,world:h.position.toArray(),screen:h.position.clone().project(camera).toArray()})),
  pathVertices:pathCurves.map(c=>Array.from(c.mesh.geometry.attributes.position.array)),
  brightness:[-1,0,1].map(z=>brightness(state,z)),renderer:renderer.info.render,controlsEnabled:controls.enabled
 });

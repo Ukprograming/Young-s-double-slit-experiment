@@ -1,6 +1,6 @@
 // x: propagation, z: lateral, y: height. All distances share one world-unit scale.
-export const SOURCE_X=-4.2, DOUBLE_X=-1, HALF_WIDTH=2.6, SPEED=0.85;
-export const defaults=()=>({source:'point',mode:'wave',L:1,d:1,wavelength:1,n:1.5,thickness:2,medium:false,angle:0,singleX:-2.9,singleZ:0,pick:0});
+export const SOURCE_X=-4.2, DOUBLE_X=-1, HALF_WIDTH=2.6, SCREEN_HALF_WIDTH=5.2, SPEED=0.425;
+export const defaults=()=>({source:'point',mode:'wave',speed:1,L:1,d:1,wavelength:1,n:1.5,thickness:2,medium:false,angle:0,singleX:-2.9,singleZ:0,pick:0});
 export const wavelength=s=>0.25*s.wavelength;
 export const slitPositions=s=>[-0.65*s.d,0.65*s.d];
 export const screenX=s=>DOUBLE_X+4*s.L;
@@ -37,7 +37,26 @@ export function phaseDifference(s,z) {
  const diff=incidentOpticalDistance(s,v)-incidentOpticalDistance(s,u)+Math.hypot(L,z-v)-Math.hypot(L,z-u);
  return 2*Math.PI*diff/wavelength(s);
 }
-export const brightness=(s,z)=>(1+Math.cos(phaseDifference(s,z)))/2;
+// Spherical wave: amplitude ~ 1/r, intensity ~ 1/r². A unit reference
+// radius regularizes the point-source singularity; plane-wave incidence stays constant.
+export const spreadingAmplitude=r=>1/Math.max(1,r);
+export function singleSlitAmplitude(s) {
+ return spreadingAmplitude(Math.hypot(s.singleX-SOURCE_X,s.singleZ));
+}
+export function incidentAmplitude(s,z) {
+ return s.source==='laser'?1:singleSlitAmplitude(s)*spreadingAmplitude(Math.hypot(DOUBLE_X-s.singleX,z-s.singleZ));
+}
+export function screenAmplitudes(s,z) {
+ return slitPositions(s).map(slit=>incidentAmplitude(s,slit)*spreadingAmplitude(Math.hypot(4*s.L,z-slit)));
+}
+export const interferenceFactor=(s,z)=>(1+Math.cos(phaseDifference(s,z)))/2;
+export function brightness(s,z) {
+ const [a,b]=screenAmplitudes(s,z);
+ return Math.max(0,(a*a+b*b+2*a*b*Math.cos(phaseDifference(s,z)))/4);
+}
+// Fixed display exposure, never renormalized per screen or frame.
+export const SCREEN_EXPOSURE=32;
+export const displayBrightness=intensity=>Math.sqrt(-Math.expm1(-SCREEN_EXPOSURE*intensity));
 export function pathPoint(s,a,b,f,offset,time,throughMedium=false) {
  const x=a[0]+(b[0]-a[0])*f,z=a[1]+(b[1]-a[1])*f;
  const optical=offset+Math.hypot(x-a[0],z-a[1])+(throughMedium?(s.n-1)*distanceInMedium(s,a,[x,z]):0);
