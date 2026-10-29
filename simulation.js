@@ -1,6 +1,6 @@
 import * as THREE from './vendor/three.module.min.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
-import { SOURCE_X,DOUBLE_X,HALF_WIDTH,SCREEN_HALF_WIDTH,SPEED,SCREEN_EXPOSURE,defaults,wavelength,slitPositions,screenX,direction,incidentStart,mediumGeometry,incidentOpticalDistance,brightness,incidentAmplitude,pathPoint } from './physics.mjs?v=20261027-2';
+import { SOURCE_X,DOUBLE_X,HALF_WIDTH,SCREEN_HALF_WIDTH,SPEED,SCREEN_EXPOSURE,defaults,wavelength,slitPositions,screenX,direction,incidentStart,mediumGeometry,incidentOpticalDistance,brightness,incidentAmplitude,pathPoint } from './physics.mjs?v=20261029-1';
 
 const $=id=>document.getElementById(id);
 const canvas=$('c'), state=defaults();
@@ -47,7 +47,7 @@ function board(x,gaps) {
  for(const y of [-.77,.77])box(hardware,[x,y,0],[0.16,0.1,HALF_WIDTH*2+0.1],0x334566);
 }
 const uniforms={
- uTime:{value:time},uLambda:{value:0.25},uScreen:{value:3},uSingle:{value:new THREE.Vector2()},uLaser:{value:0},
+ uTime:{value:time},uLambda:{value:wavelength(state)},uScreen:{value:3},uSingle:{value:new THREE.Vector2()},uLaser:{value:0},
  uAmplitude:{value:new THREE.Vector2(1,1)},uDirection:{value:new THREE.Vector2(1,0)},uSlits:{value:new THREE.Vector2()},uIncident:{value:new THREE.Vector2()},
  uMedium:{value:0},uN:{value:1.5},uBoxCenter:{value:new THREE.Vector2()},uBoxAxis:{value:new THREE.Vector2()},uBoxSize:{value:new THREE.Vector2()}
 };
@@ -75,10 +75,18 @@ const shared=`
  float spread(float r){return 1./max(1.,r);}
  float singleAmplitude(){return spread(distance(vec2(-4.2,0.),uSingle));}
  float waveLight(float amplitude){return pow(1.-exp(-8.*amplitude*amplitude),.4);}
- float crest(float optical){
-  float phase=6.28318530718*(optical-${SPEED}*uTime)/uLambda;
+ float phaseLine(float optical,float offset){
+  float phase=6.28318530718*((optical-${SPEED}*uTime)/uLambda-offset);
   float band=abs(sin(phase*.5));
   return (1.-smoothstep(.025,.025+max(fwidth(phase)*.65,.13),band))*step(optical,${SPEED}*uTime);
+ }
+ // Arc length (or transverse distance for plane waves) keeps dashes along
+ // each wavefront; troughs stay exactly half a wavelength behind crests.
+ float arcLength(vec2 delta){return length(delta)*atan(delta.y,delta.x);}
+ float wavefront(float optical,float tangent){
+  float along=tangent/.22;
+  float dash=1.-smoothstep(.28,.28+max(fwidth(along),.01),abs(fract(along)-.5));
+  return max(phaseLine(optical,0.),phaseLine(optical,.5)*dash);
  }
 `;
 const waveMaterial=new THREE.ShaderMaterial({uniforms,vertexShader:vertex,transparent:true,depthWrite:false,side:THREE.DoubleSide,
@@ -89,12 +97,12 @@ const waveMaterial=new THREE.ShaderMaterial({uniforms,vertexShader:vertex,transp
   if(p.x>=uScreen||abs(p.y)>(p.x< -1.?${HALF_WIDTH.toFixed(1)}:${SCREEN_HALF_WIDTH.toFixed(1)}))discard;
   vec3 color=vec3(1.,.78,.32);float alpha=0.;
   if(p.x< -1.045){
-   if(uLaser<.5&&p.x<uSingle.x-.04){float r=distance(p,vec2(-4.2,0.));alpha=crest(r)*waveLight(spread(r));}
-   else if(uLaser>.5||p.x>uSingle.x+.04){float a=uLaser>.5?1.:singleAmplitude()*spread(distance(p,uSingle));alpha=crest(incident(p))*waveLight(a);}
+   if(uLaser<.5&&p.x<uSingle.x-.04){vec2 delta=p-vec2(-4.2,0.);float r=length(delta);alpha=wavefront(r,arcLength(delta))*waveLight(spread(r));}
+   else if(uLaser>.5||p.x>uSingle.x+.04){float a=uLaser>.5?1.:singleAmplitude()*spread(distance(p,uSingle));float tangent=uLaser>.5?dot(p,vec2(-uDirection.y,uDirection.x)):arcLength(p-uSingle);alpha=wavefront(incident(p),tangent)*waveLight(a);}
   }else if(p.x>-.955){
    float r1=distance(p,vec2(-1.,uSlits.x)),r2=distance(p,vec2(-1.,uSlits.y));
-   float upper=crest(uIncident.x+r1)*waveLight(uAmplitude.x*spread(r1));
-   float lower=crest(uIncident.y+r2)*waveLight(uAmplitude.y*spread(r2));
+   float upper=wavefront(uIncident.x+r1,arcLength(p-vec2(-1.,uSlits.x)))*waveLight(uAmplitude.x*spread(r1));
+   float lower=wavefront(uIncident.y+r2,arcLength(p-vec2(-1.,uSlits.y)))*waveLight(uAmplitude.y*spread(r2));
    color=mix(vec3(.35,.95,.72),vec3(.38,.7,1.),lower/(upper+lower+.001));
    alpha=max(upper,lower);
   }

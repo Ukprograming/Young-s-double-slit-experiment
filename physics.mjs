@@ -1,7 +1,7 @@
 // x: propagation, z: lateral, y: height. All distances share one world-unit scale.
 export const SOURCE_X=-4.2, DOUBLE_X=-1, HALF_WIDTH=2.6, SCREEN_HALF_WIDTH=5.2, SPEED=0.425;
 export const defaults=()=>({source:'point',mode:'wave',speed:1,L:1,d:1,wavelength:1,n:1.5,thickness:2,medium:false,angle:0,singleX:-2.9,singleZ:0,pick:0});
-export const wavelength=s=>0.25*s.wavelength;
+export const wavelength=s=>0.5*s.wavelength;
 export const slitPositions=s=>[-0.65*s.d,0.65*s.d];
 export const screenX=s=>DOUBLE_X+4*s.L;
 export const direction=s=>[Math.cos(s.angle*Math.PI/180),Math.sin(s.angle*Math.PI/180)];

@@ -93,8 +93,10 @@ check(d.camera[1]>d.target[1]+1&&d.camera[2]>d.target[2]+1,'restore oblique view
 const handle=d.handles.find(h=>h.kind==='single'),box=await canvas.boundingBox();
 const hx=box.x+(handle.screen[0]+1)*box.width/2,hy=box.y+(1-handle.screen[1])*box.height/2;
 await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[touch(hx,hy,1)]});
+await page.waitForFunction(()=>!window.youngDiagnostics().controlsEnabled,null,{timeout:2000});
 check(!(await read()).controlsEnabled,'touch acquires object handle');
 await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});
+await page.waitForFunction(()=>window.youngDiagnostics().controlsEnabled,null,{timeout:2000});
 check((await read()).controlsEnabled,'touch cancellation releases object handle');
 await page.getByRole('button',{name:'初期化',exact:true}).click();
 check(errors.length===0,'no JavaScript or WebGL shader errors');
